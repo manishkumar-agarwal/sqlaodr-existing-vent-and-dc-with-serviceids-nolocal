@@ -225,7 +225,7 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-nic'))]",
         "[resourceId('Microsoft.Compute/availabilitySets', parameters('sqlAlwaysOnValues').sqlAvailabilitySetName)]",
-        "[resourceId('Microsoft.Storage/storageAccounts'),parameters('sqlAlwaysOnValues').diagnosticStorageAccount]"
+        "[resourceId('Microsoft.Storage/storageAccounts',parameters('sqlAlwaysOnValues').diagnosticStorageAccount)]"
       ]
     },
     {
