@@ -1,0 +1,317 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "sqlAlwaysOnValues": {
+      "type": "secureObject"
+    },
+    "adminUsername": {
+      "type": "string"
+    },
+    "adminPassword": {
+      "type": "secureString"
+    },
+    "_artifactsLocation": {
+      "type": "string"
+    },
+    "_artifactsLocationSasToken": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "apiVersionStorage": "2015-06-15",
+    "sqlDiskSize": 2046,
+    "addUsers": " manis549 manis549adm xiyua565 xiyua565adm svconeplacesetup 'RSG Server Admins'",
+    "sqlLBName": "[parameters('sqlAlwaysOnValues').sqlILBName]",
+    "lbFE1": "[concat(variables('sqlLBName'),'-FrontEnd')]",
+    "lbBE": "[concat(variables('sqlLBName'),'-BackEnd')]",
+    "sqlLBID": "[resourceId('Microsoft.Network/loadBalancers',variables('sqlLBName'))]",
+    "sqlLBFEConfigID1": "[concat(variables('sqlLBID'),'/frontendIPConfigurations/',variables('lbFE1'))]",
+    "sqlLBBEAddressPoolID": "[concat(variables('sqlLBID'),'/backendAddressPools/',variables('lbBE'))]",
+    "sqlAOProbe1": "[concat(variables('sqlLBName'),'-EndPointProbe')]",
+    "sqlLBProbeID1": "[concat(variables('sqlLBID'),'/probes/',variables('sqlAOProbe1'))]",
+    "sqlStorageAccountPrefix": "[parameters('sqlAlwaysOnValues').sqlStorageAccountPrefix]",
+    "vmContainerName": "vhds",
+    "deploySqlAlwaysOn": "deploySqlAlwaysOn",
+    "deploySqlAlwaysOnTemplateUrl": "[concat(parameters('_artifactsLocation'),'/nested/deploy-sql-alwayson.json',parameters('_artifactsLocationSasToken'))]",
+    "sqlAOListener1": "[concat(variables('sqlLBName'),'-EndPointListener')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[parameters('sqlAlwaysOnValues').diagnosticStorageAccount]",
+      "apiVersion": "2016-01-01",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "[parameters('sqlAlwaysOnValues').storageAccountType]"
+      },
+      "kind": "Storage",
+      "tags": "[parameters('sqlAlwaysOnValues').tags]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Compute/availabilitySets",
+      "sku": {
+        "name": "Aligned"
+      },
+      "name": "[parameters('sqlAlwaysOnValues').sqlAvailabilitySetName]",
+      "apiVersion": "2017-03-30",
+      "location": "[resourceGroup().location]",
+      "tags": "[parameters('sqlAlwaysOnValues').tags]",
+      "properties": {
+        "platformUpdateDomainCount": 5,
+        "platformFaultDomainCount": 2
+      }
+    },
+    {
+      "type": "Microsoft.Network/loadBalancers",
+      "name": "[variables('sqlLBName')]",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "tags": "[parameters('sqlAlwaysOnValues').tags]",
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "[variables('lbFE1')]",
+            "properties": {
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "[parameters('sqlAlwaysOnValues').sqlLBIPAddress]",
+              "subnet": {
+                "id": "[parameters('sqlAlwaysOnValues').lbSubnetUri]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[variables('lbBE')]"
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "[variables('sqlAOListener1')]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('sqlLBFEConfigID1')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('sqlLBBEAddressPoolID')]"
+              },
+              "probe": {
+                "id": "[variables('sqlLBProbeID1')]"
+              },
+              "protocol": "Tcp",
+              "frontendPort": 1433,
+              "backendPort": 1433,
+              "enableFloatingIP": true
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "[variables('sqlAOProbe1')]",
+            "properties": {
+              "protocol": "Tcp",
+              "port": 59999,
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2
+            }
+          }
+        ]
+      },
+      "dependsOn": []
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-nic')]",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "nicLoop",
+        "count": "[length(parameters('sqlAlwaysOnValues').sqlServerVMNames)]"
+      },
+      "tags": "[parameters('sqlAlwaysOnValues').tags]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[parameters('sqlAlwaysOnValues').nicSubnetUri]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[variables('sqlLBBEAddressPoolID')]"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[variables('sqlLBID')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[parameters('sqlAlwaysOnValues').sqlServerVMNames[copyIndex()]]",
+      "apiVersion": "2017-03-30",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "virtualMachineLoop",
+        "count": "[length(parameters('sqlAlwaysOnValues').sqlServerVMNames)]"
+      },
+      "tags": "[parameters('sqlAlwaysOnValues').tags]",
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('sqlAlwaysOnValues').sqlVMSize]"
+        },
+        "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', parameters('sqlAlwaysOnValues').sqlAvailabilitySetName)]"
+        },
+        "osProfile": {
+          "computerName": "[parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()]]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": "[parameters('sqlAlwaysOnValues').sqlServerImageReference]",
+          "osDisk": {
+            "name": "[concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-osdisk')]",
+            "managedDisk": {
+              "storageAccountType": "Premium_LRS"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "managedDisk": {
+                "storageAccountType": "Premium_LRS"
+              },
+              "name": "[concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-datadisk1')]",
+              "caching": "ReadWrite",
+              "createOption": "Empty",
+              "diskSizeGB": "[variables('sqlDiskSize')]",
+              "lun": 0
+            },
+            {
+              "managedDisk": {
+                "storageAccountType": "Premium_LRS"
+              },
+              "name": "[concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-datadisk2')]",
+              "caching": "None",
+              "createOption": "Empty",
+              "diskSizeGB": "[variables('sqlDiskSize')]",
+              "lun": 1
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-nic'))]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": "true",
+            "storageUri": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts/', parameters('sqlAlwaysOnValues').diagnosticStorageAccount), '2016-01-01').primaryEndpoints.blob)]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('sqlAlwaysOnValues').sqlServerVMNames[copyindex()], '-nic'))]",
+        "[resourceId('Microsoft.Compute/availabilitySets', parameters('sqlAlwaysOnValues').sqlAvailabilitySetName)]",
+        "[resourceId('Microsoft.Storage/storageAccounts'),parameters('sqlAlwaysOnValues').diagnosticStorageAccount]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "name": "[concat(parameters('sqlAlwaysOnValues').vmNames[copyIndex()],'/joindomain')]",
+      "apiVersion": "2016-04-30-preview",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "domainJoinLoop",
+        "count": "[length(parameters('sqlAlwaysOnValues').vmNames)]"
+      },
+      "properties": {
+        "publisher": "Microsoft.Compute",
+        "type": "JsonADDomainExtension",
+        "typeHandlerVersion": "1.3",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "Name": "[parameters('sqlAlwaysOnValues').domainName]",
+          "Options": "3",
+          "OUPath": "[parameters('sqlAlwaysOnValues').domainjoinouPath]",
+          "Restart": "true",
+          "User": "[concat('internal','\\',parameters('adminUsername'))]"
+        },
+        "protectedsettings": {
+          "Password": "[parameters('adminPassword')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Compute/virtualMachines',parameters('sqlAlwaysOnValues').sqlServerVMNames[copyIndex()])]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "name": "[concat(parameters('sqlAlwaysOnValues').vmNames[copyIndex()],'/scriptconfig')]",
+      "apiVersion": "2016-04-30-preview",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "configAdminsLoop",
+        "count": "[length(parameters('sqlAlwaysOnValues').vmNames)]"
+      },
+      "properties": {
+        "publisher": "Microsoft.Compute",
+        "type": "CustomScriptExtension",
+        "typeHandlerVersion": "1.8",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "fileUris": [],
+          "commandToExecute": "[concat('powershell -ExecutionPolicy Unrestricted net localgroup administrators ','internal','\\',parameters('adminUsername'),' ',parameters('sqlAlwaysOnValues').sqlServerServiceAccountUserName,variables('addUsers'),' /add')]"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', parameters('sqlAlwaysOnValues').sqlServerVMNames[copyIndex()],'/extensions','/joindomain')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "name": "[variables('deploySqlAlwaysOn')]",
+      "apiVersion": "2015-01-01",
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "[variables('deploySqlAlwaysOnTemplateUrl')]",
+          "contentVersion": "1.0.0.0"
+        },
+        "parameters": {
+          "sqlAlwaysOnValues": {
+            "value": "[parameters('sqlAlwaysOnValues')]"
+          },
+          "adminUsername": {
+            "value": "[parameters('adminUsername')]"
+          },
+          "adminPassword": {
+            "value": "[parameters('adminPassword')]"
+          },
+          "_artifactsLocation": {
+            "value": "[parameters('_artifactsLocation')]"
+          },
+          "_artifactsLocationSasToken": {
+            "value": "[parameters('_artifactsLocationSasToken')]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', parameters('sqlAlwaysOnValues').sqlServerVMNames[0],'/extensions','/scriptconfig')]"
+      ]
+    }
+  ],
+  "outputs": {}
+}
